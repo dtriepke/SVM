@@ -1,0 +1,329 @@
+---
+title: "Support Vector Machines"
+output: html_notebook
+---
+
+
+## Einleitung 
+Es wird die library `e1071` in `R` benutz, um die  die Methodik der SVM zu veranschaulichen.  
+
+*(note: das Paket wurde nach des Raum an der TU Wien benannt, in dem es geschrieben wurde)*
+```{r}
+rm(list = ls(all = TRUE))
+library(e1071)
+library(dplyr)
+
+```
+
+***
+
+## Maximal Margin Classifier
+### Erstellen eines Beispieldatansatzes
+Im ersten Schtitt wird zur Veranschaulichung ein fiktiver Trainingsdatensatz erstellt:
+$S = \left\lbrace \left(\mathbf{x}^{(i)}, y^{(i)}\right )\mid i, \ldots, 10, \mathbf{x}^{(i)} \in \mathbb{R}^2, y^{(i)} \in \left\lbrace-1,1\right\rbrace \right\rbrace$  
+
+Das Resultat liefert eine Menge an $\mathbf{x}^{(i)}$ die hinsichtlich ihrer $y^{(i)}$ linear Trennbar sind.
+```{r}
+set.seed(1987)
+N <- 10
+x <- data.frame(X1 = c(runif(N/2,1,5), runif(N/2,1,5) + 3),
+                X2 = c(runif(N/2,1,5), runif(N/2,1,5) + 3))
+y = c(rep(-1,N/2),rep(1, N/2))
+
+head(cbind(x, y))
+
+plot(x, col = (y + 3), 
+     pch = 19,
+     xlab = expression(x[1]), 
+     ylab = expression(x[2])
+)
+
+```
+
+### Sch?tzung
+Mit der Funktion `svm()`aus dem Paket `e1071` kann das eingeschr?nkte Optimierungsproblem gel?st werden.  
+$\underset{\mathbf{w},b}{\min} \frac{1}{2}||\mathbf{w}|| + C \sum_{i=1}^{N} \xi_i$,  
+u.d.N. $y^{(i)}(\mathbf{w}^T\mathbf{x}^{(i)} +b ) \geq 1 - \xi_i$, $1,\ldots,N$
+  
+Die Visualisierung erfolgt ?ber `plot()`, jedoch ist man hier recht beschr?nkt in den M?glichkeiten der Parametrisierungen und die Axes sind vertauscht.  
+
+
+*(Anmerkung: der Kostenparameter $C$ ist default auf 1 gesetzt und durch* `scale = TRUE` *werden die Daten normiert auf $\mu$ = 0 und $\sigma^2$= 1)*
+
+```{r}
+df <- cbind(x, y = factor(y))
+svmfit <- svm(y~., data = df, 
+              kernel = "linear",
+              cost = 1, 
+              scale = FALSE)
+
+plot(svmfit, df)
+```
+
+### Zusammenfassung
+```{r}
+summary(svmfit)
+```
+
+
+Hinter der Funktion `svm()` verbergen sich viele n?tzliche Eigenschaften. M?chte man z.B. die Indeces der Support Vektoren haben, dann so geht das ?ber:
+
+```{r}
+svmfit$index
+
+```
+
+
+***
+
+
+### Plot selber generieren
+Hier folgt eine Methode das Resultat im $\mathbb{R}^2$ selber zu plotten.  
+Hierf?r wird eine Funktion `plot_svm()` geschrieben, mit der Idee ein eingef?rbtes Raster ?ber den eingeschr?nkten Merkmalsraum zu legen und die Hyperbene sowie die Klassengrenze einzuzeichen.
+
+>  Neue Beobachtungen $\mathbf{x}^*$ lassen sich leicht mit der Funktion `predict()` klassifizieren.
+
+
+```{r}
+plot_svm <- function(model, x, y, n = 75){
+  
+  # Bedingungen
+    stopifnot(model$scaled == FALSE,
+              nrow(x) == length(y),
+              class(y) == "factor"
+              )
+
+  # Erstellen eines Raster
+  range_x <- apply(x, 2, range)
+  x1 <- seq(range_x[1,1], range_x[2,1], length = n)
+  x2 <- seq(range_x[1,2], range_x[2,2], length = n)
+    ## expand.grid erstellt eine Matrix mit allen m?glichen Kombinatione der Elemenete der Eingabevektoren
+    x_grid <- expand.grid(X1 = x1, X2 = x2)
+    names(x_grid) <- names(x)
+    y_grid <- predict(model, x_grid)
+  
+  # Plotten des Rasters
+  plot(x_grid,
+       col = c("red", "blue")[as.numeric(y_grid)],
+       pch = 20,
+       cex = .2,
+       ann = FALSE,
+       xlim = c(min(x1), max(x1)),
+       ylim = c(min(x2), max(x2)))
+  
+  # Text Outputs
+  title(main = "SVM Classification Plot",
+        xlab = substitute(paste(X[1], " = ", x1), list(x1 = names(x)[1]) ),
+        ylab = substitute(paste(X[2], " = ", x2), list(x2 = names(x)[2]) ),
+        sub  = substitute(paste(w^T, " = (", w1, "," , w2, ");     b = ", b, ";     cost = ", c), 
+                          list(w1 =  round(drop(t(model$coefs) %*% as.matrix(x[model$index,]))[1], 2),
+                               w2 =  round(drop(t(model$coefs) %*% as.matrix(x[model$index,]))[2], 2),
+                               b =   round(model$rho, 2),
+                               c = model$cost
+                               )),
+        ## Textformatierungen
+        col.main = "Skyblue",
+        cex.main = 1.8,
+        font.main = 7)  
+  
+
+  # Trainingspunkte
+  points(x, bg = c("red", "blue")[y], pch = 21, cex = 1.5)
+
+  # Support Vectors
+  points(x[model$index,], pch = 9, cex = 3)
+  
+  # Hyperbene und Klassengrenzen.
+  if (model$kernel == 0){
+  
+  w <- drop(t(model$coefs) %*%  as.matrix(x[model$index,]))
+  b <- model$rho
+
+  ## Hyperebene
+  abline(b / w[2], -w[1] / w[2], lwd = 2.5)
+  
+  ## Klassengrenzen
+  abline((b - 1) / w[2] , -w[1] / w[2], lty = 2, lwd = 2)
+  abline((b + 1) / w[2] , -w[1] / w[2], lty = 2, lwd = 2)
+
+  
+}
+  }
+  
+
+```
+
+
+Die Funktion `plot_svm()` wird nun auf die Trainingsdaten angewendet.  
+
+* Die Hyperbene ist als durchgezogen Linie und die Klassengrenzen als dotted.  
+* Entscheidungsregeln im sichtbaren Merkmalsraum sind farblich eingef?rbt  
+* die Support Vector sind mit einem Viereck versehen
+
+
+```{r}
+plot_svm(model = svmfit, x = df[,1:2], y = df$y)
+
+```
+
+
+## Support Vector Classifier
+Um nun eine Trainingsmenge zu erzeugen, die nicht mehr linear Trennbar sind,  wird der Datensatz um ein Trainingspunkt so erweitert, dass die Klassen nicht mehr linear trennbar jedoch aber ?berlappend sind: $(\mathbf{x}^{(11)} = (5, 6), -1)$ 
+```{r}
+x <- rbind(x, c(5,6))
+y <- c(y, -1)
+df = data.frame(x, y = factor(y, labels = c("-1", "1")))
+
+plot(x, col = (y + 3), 
+     pch = 19,
+     xlab = expression(x[1]), 
+     ylab = expression(x[2])
+     )
+```
+
+### Kostenparameter
+Der Klassifikator wird nun genutzt mit verschiedenen Werten des Parameters `cost`. 
+```{r, fig.height=10, fig.width=10}
+par(mfrow = c(3,2))
+
+for (C in c(10, 1, 0.8, 0.4, 0.2, 0.1)){
+svm(y~., data = df,
+    kernel = "linear", 
+    cost = C, 
+    scale = FALSE) %>% 
+   plot_svm( x = df[,1:2], y = df$y)
+   
+}
+
+par(mfrow = c(1,1))
+```
+
+Wie man sehen kann, bewirkt der eine neu hinzugef?gte Ausrei?er eine starke verschiebung der Hyperbene. Durch den Parameter `cost` kann dieses jedoch ausgeglichen werden. Im n?chsten Abschnitt soll eine Methode vorgestellt werden, um die optimale Wahl der Parameters zu gew?hrleisten.
+
+
+***
+
+
+## Motor Trend Car Road Tests
+> The data was extracted from the 1974 Motor Trend US magazine, and comprises fuel consumption and 10 aspects of automobile design and performance for 32 automobiles (1973-74 models). 
+
+* vs = V/S  
+* disp Displacement (cu.in.)  
+* qsec = 1/4 mile time 
+
+
+```{r}
+set.seed(1807)
+# Auswahl  der Merkmale und Klassen
+data <- mtcars %>%  
+  select(disp, qsec , vs) %>% 
+  within({ vs = factor(vs, labels = c("-1", "1"))})
+
+head(data)
+
+```
+
+Die Daten werden f?r die Validierung des Models in Test und Trainigsdaten gesplitted.
+```{r}
+# Splitten der Daten in Test und Trainingsdaten
+train <- sample(c(1:nrow(data)), size = .8 * nrow(data) )
+test <- -train
+data_train <- data[train,]
+data_test <- data[test,]
+
+
+# plotten der Trainingsdaten
+plot(data_train[,1:2], col = (3 + as.numeric(as.character(data_train$vs))), pch = 20)
+```
+
+
+
+### Cross-Validation
+
+Die optimale Wahl des Parameters `cost` soll durch *Cross-Validation* bestimmt werden. Hierf?r bietet das Paket `e1071` die Funktion `tune()` oder `tune.svm()` eine L?sung.  
+Es werden also lineare SVMs mit verschiedene Parameter `cost` verglichen.
+
+```{r}
+set.seed(1987)
+tune_out <- tune.svm(vs~., 
+                    data = data_train, 
+                    kernel ="linear", 
+                    scale = FALSE,
+                    cost = c(0.001, 0.01, 0.1, 1, 10)
+                    )
+
+
+summary(tune_out)
+plot(tune_out)
+points(tune_out$best.parameters, col = "red", pch = 20)
+
+```
+> Wei man sieht, hat die SVM mit `cost = 0.1` den kleinsten Fehler.
+
+
+### Plotten des besten Models
+```{r}
+tune_out$best.model %>% plot_svm(x = data_train[,1:2], y = data_train$vs)
+
+```
+
+
+### Kontingenztafel
+
+```{r}
+data_test$vs_pred <- predict(tune_out$best.model, data_test[1:2])
+table(predict = data_test$vs_pred, truth = data_test$vs)
+```
+Keines der 7 Testdaten wird durch die beste SVM mit `cost = 0.1` falsch klassifiziert.  
+
+In der Grafik werden die Test Punkte in gro?en Kreisen mit den dazugeh?rigen Werten f?r $y^{(i)}$ geplotten, um das Resultat visuel zu veranschaulichen.
+
+```{r}
+tune_out$best.model %>% plot_svm(x = data_train[,1:2], y = data_train$vs)
+points(data_test, pch = 21, cex = 3.5, bg = c("red", "blue")[data_test$vs])
+text(data_test, labels = data_test$vs, col = "white")
+
+```
+
+
+  
+Wie sieht es aus, mit `cost = 0.01`?  
+```{r}
+
+svmfit = svm(vs~., 
+             data = data_train, 
+             kernel = "linear", 
+             cost = 0.01,
+             scale = FALSE)
+
+data_test$vs_pred <- predict(svmfit, data_test[1:2])
+table(predict = data_test$vs_pred, truth = data_test$vs)
+```
+
+Eine der Testdatenpunkte wird durch die Parametrisierung 0.01 falsch klassifiziert.
+
+
+```{r}
+svmfit %>% plot_svm(x = data_train[,1:2], y = data_train$vs)
+points(data_test, pch = 21, cex = 3.5, bg = c("red", "blue")[data_test$vs])
+text(data_test, labels = data_test$vs, col = "white")
+```
+
+### Grafische Auswirkung des optimalen C
+```{r, fig.height=15, fig.width=10}
+par(mfrow = c(4,2))
+
+for (C in c(10, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001)){
+svm(vs~., data = data,
+    kernel = "linear", 
+    cost = C, 
+    scale = FALSE) %>% 
+   plot_svm( x = data[,1:2], y = data$vs) 
+   points(data_test, pch = 21, cex = 3.5, bg = c("red", "blue")[data_test$vs])
+   text(data_test, labels = data_test$vs, col = "white")
+   
+}
+
+par(mfrow = c(1,1))
+```
+
